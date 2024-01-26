@@ -1,0 +1,103 @@
+---
+title: "ESM 244 Lab 3 pt. 2"
+author: "Caroline Edmonds"
+format: 
+  html:
+    code-fold: show
+    toc: true
+    number-sections: true
+    embed-resources: true
+editor: visual
+execute: 
+  echo: true
+  message: false
+  warning: false
+---
+
+```{r}
+library(tidyverse)
+library(here)
+library(sf)
+library(terra)
+library(tidyterra)
+library(gstat)
+library(stars)
+```
+
+# Overview
+
+Create a variogram in R to understand the spatial dependence of ground water depth in California.
+
+## Read in the data!
+
+```{r}
+ca_counties_sf <- read_sf(here('data/ca_counties'), layer = 'CA_Counties_TIGER2016') |>
+  janitor::clean_names() |>
+  select(name)
+
+ca_dgw_sf <- read_sf(here('data', 'ca_dgw','2013_DBGS.gpkg')) |>
+  rename(depth = dgbs)
+```
+
+```{r}
+ca_dgw_sf <- st_transform(ca_dgw_sf, 3857) 
+```
+
+```{r}
+D
+```
+
+```{r}
+sj_county_sf <- ca_counties_sf |>
+  filter(name == "San Joaquin")
+
+sj_depth_sf <- ca_dgw_sf |>
+  st_intersection(sj_county_sf)
+```
+
+```{r}
+ggplot()+
+  geom_sf(data = sj_county_sf)+
+  geom_sf(data = sj_depth_sf, aes(color =depth))+
+  theme_void()
+```
+
+# Spatial Interpolation
+
+## Make a variogram
+
+```{r}
+sj_dgw_vgm <- gstat::variogram(depth ~ 1, data = sj_depth_sf)
+
+plot(sj_dgw_vgm)
+
+vgm_fit <- fit.variogram(sj_dgw_vgm,
+                         model = vgm(model = 'Gau',nugget = TRUE))
+
+plot(sj_dgw_vgm, vgm_fit)
+
+
+attr(vgm_fit, 'SSErr')
+```
+
+```{r}
+sj_grid <- st_bbox(sj_county_sf) %>% 
+  stars::st_as_stars(dx = 1000, dy = 1000)
+
+
+dgw_krige <- krige(depth ~ 1, sj_depth_sf, sj_grid, model = vgm_fit)
+
+plot(dgw_krige)
+```
+
+```{r}
+krige_rast <- dgw_krige |>
+  terra::rast() |>
+  setNames(c('pred', 'var'))
+
+ggplot()+
+  tidyterra::geom_spatraster(data = krige_rast, aes(fill = var))+
+  geom_sf(data = sj_depth_sf, aes(fill = depth), shape =21)+
+  geom_sf(data = sj_county_sf, color = 'black', fill = NA)+
+  scale_fill_gradient(low = 'blue', high = 'yellow')
+```
